@@ -353,6 +353,70 @@ input {
   color: #6f786f;
 }
 
+.diagnostic-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid #d8ded7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.diagnostic-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diagnostic-head h2 {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.diagnostic-head div {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.diagnostic-head button {
+  min-height: 32px;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #e8efe5;
+  color: #194d45;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.diagnostic-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.diagnostic-grid dd {
+  font-size: 13px;
+}
+
+.diagnostic-line {
+  margin-top: 10px;
+  color: #334039;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-log {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #5d675f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.diagnostic-log li + li {
+  margin-top: 4px;
+}
+
 .device-list {
   display: grid;
   gap: 10px;

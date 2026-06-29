@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -156,6 +157,11 @@ public class MainActivity extends BridgeActivity {
             handler.post(() -> getCurrentLocationOnMainThread(requestId));
         }
 
+        @JavascriptInterface
+        public void getDiagnostics(String requestId) {
+            handler.post(() -> sendDiagnosticsResult(requestId, diagnosticsPayload()));
+        }
+
         @SuppressLint("MissingPermission")
         private void getCurrentLocationOnMainThread(String requestId) {
             if (!hasForegroundLocationPermission()) {
@@ -182,12 +188,6 @@ public class MainActivity extends BridgeActivity {
                 return;
             }
 
-            String provider = providers.contains(LocationManager.GPS_PROVIDER)
-                ? LocationManager.GPS_PROVIDER
-                : providers.contains(LocationManager.NETWORK_PROVIDER)
-                    ? LocationManager.NETWORK_PROVIDER
-                    : providers.get(0);
-
             final LocationListener[] listenerRef = new LocationListener[1];
             Runnable timeout = () -> {
                 if (listenerRef[0] != null) {
@@ -213,7 +213,9 @@ public class MainActivity extends BridgeActivity {
             listenerRef[0] = listener;
 
             try {
-                locationManager.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper());
+                for (String provider : providers) {
+                    locationManager.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper());
+                }
                 handler.postDelayed(timeout, 25_000);
             } catch (IllegalArgumentException | SecurityException err) {
                 handler.removeCallbacks(timeout);
@@ -246,6 +248,7 @@ public class MainActivity extends BridgeActivity {
                 payload.put("ok", true);
                 payload.put("coords", coords);
                 payload.put("timestamp", location.getTime());
+                payload.put("provider", location.getProvider());
             } catch (JSONException ignored) {
                 return locationError("serialization_failed", "Could not serialize location.");
             }
@@ -268,6 +271,73 @@ public class MainActivity extends BridgeActivity {
                 return;
             }
             String script = "window.__guidengNativeLocationResult && window.__guidengNativeLocationResult("
+                + JSONObject.quote(requestId)
+                + ","
+                + payload
+                + ")";
+            bridge.getWebView().evaluateJavascript(script, null);
+        }
+
+        private JSONObject diagnosticsPayload() {
+            JSONObject payload = new JSONObject();
+            try {
+                payload.put("ok", true);
+                payload.put("sdk", Build.VERSION.SDK_INT);
+                payload.put("finePermission", hasPermission(Manifest.permission.ACCESS_FINE_LOCATION));
+                payload.put("coarsePermission", hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION));
+                payload.put(
+                    "backgroundPermission",
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                );
+                payload.put(
+                    "notificationPermission",
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+                );
+                payload.put("foregroundServiceAllowed", hasForegroundLocationPermission());
+
+                LocationManager locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+                if (locationManager == null) {
+                    payload.put("locationManager", false);
+                    return payload;
+                }
+
+                payload.put("locationManager", true);
+                JSONArray allProviders = new JSONArray();
+                for (String provider : locationManager.getAllProviders()) {
+                    allProviders.put(provider);
+                }
+                payload.put("allProviders", allProviders);
+
+                List<String> enabledProviders = locationManager.getProviders(true);
+                JSONArray enabled = new JSONArray();
+                if (enabledProviders != null) {
+                    for (String provider : enabledProviders) {
+                        enabled.put(provider);
+                    }
+                }
+                payload.put("enabledProviders", enabled);
+
+                if (hasForegroundLocationPermission() && enabledProviders != null && !enabledProviders.isEmpty()) {
+                    Location last = newestLastKnownLocation(locationManager, enabledProviders);
+                    if (last != null) {
+                        JSONObject lastKnown = locationPayload(last);
+                        lastKnown.put("ageMs", System.currentTimeMillis() - last.getTime());
+                        payload.put("lastKnownLocation", lastKnown);
+                    } else {
+                        payload.put("lastKnownLocation", JSONObject.NULL);
+                    }
+                }
+            } catch (JSONException | SecurityException err) {
+                return locationError("diagnostics_failed", err.getMessage());
+            }
+            return payload;
+        }
+
+        private void sendDiagnosticsResult(String requestId, JSONObject payload) {
+            if (bridge == null || bridge.getWebView() == null) {
+                return;
+            }
+            String script = "window.__guidengNativeDiagnosticsResult && window.__guidengNativeDiagnosticsResult("
                 + JSONObject.quote(requestId)
                 + ","
                 + payload
