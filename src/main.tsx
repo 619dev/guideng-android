@@ -468,6 +468,11 @@ function AmapView({
 }) {
   const t = i18n[lang];
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+  const mapRef = React.useRef<any>(null);
+  const amapRef = React.useRef<any>(null);
+  const markersRef = React.useRef<Map<string, any>>(new Map());
+  const polylineRef = React.useRef<any>(null);
+  const didFitInitialViewRef = React.useRef(false);
   const [loading, setLoading] = useState(false);
   const key = config?.amap_web_js_api_key?.trim();
   const securityCode = config?.amap_web_js_security_code?.trim();
@@ -476,47 +481,20 @@ function AmapView({
   const location = selectedDevice?.last_location;
 
   useEffect(() => {
-    if (!containerRef.current || !location || !key || !selectedDevice) return;
+    if (!containerRef.current || !key) return;
     let cancelled = false;
-    let map: any = null;
     setLoading(true);
 
     loadAmap(key, securityCode)
       .then((AMap) => {
         if (cancelled || !containerRef.current) return;
-        const center = mapCoordinate(location);
-        const trackPath = tracks.map(mapCoordinate).map((point) => [point.longitude, point.latitude]);
-        map = new AMap.Map(containerRef.current, {
-          center: [center.longitude, center.latitude],
-          zoom: 15,
+        amapRef.current = AMap;
+        mapRef.current = new AMap.Map(containerRef.current, {
+          center: location ? coordinatePair(location) : [116.397428, 39.90923],
+          zoom: location ? 15 : 4,
           viewMode: '2D',
         });
-        const markers = locatedDevices.map((device) => {
-          const deviceLocation = device.last_location!;
-          const point = mapCoordinate(deviceLocation);
-          const active = device.id === selectedDevice.id;
-          const marker = new AMap.Marker({
-            position: [point.longitude, point.latitude],
-            title: device.name,
-            content: createDeviceMarker(device.name, active),
-            offset: new AMap.Pixel(-18, -46),
-            map,
-          });
-          marker.on('click', () => onSelectDevice(device.id));
-          return marker;
-        });
-        if (trackPath.length > 1) {
-          const polyline = new AMap.Polyline({
-            path: trackPath,
-            strokeColor: '#2f8f4e',
-            strokeWeight: 6,
-            strokeOpacity: 0.9,
-            map,
-          });
-          map.setFitView([polyline, ...markers], false, [60, 60, 60, 60]);
-        } else {
-          map.setFitView(markers, false, [80, 80, 80, 80]);
-        }
+        didFitInitialViewRef.current = false;
       })
       .catch((error) => {
         console.error(error);
@@ -527,9 +505,77 @@ function AmapView({
 
     return () => {
       cancelled = true;
-      if (map) map.destroy();
+      polylineRef.current = null;
+      markersRef.current.clear();
+      if (mapRef.current) mapRef.current.destroy();
+      mapRef.current = null;
+      amapRef.current = null;
     };
-  }, [key, securityCode, selectedDeviceId, locatedDevices, location?.latitude, location?.longitude, tracks, onSelectDevice]);
+  }, [key, securityCode]);
+
+  useEffect(() => {
+    const AMap = amapRef.current;
+    const map = mapRef.current;
+    if (!AMap || !map || !selectedDevice) return;
+
+    const activeMarkerIds = new Set<string>();
+    for (const device of locatedDevices) {
+      const deviceLocation = device.last_location;
+      if (!deviceLocation) continue;
+      activeMarkerIds.add(device.id);
+      const active = device.id === selectedDevice.id;
+      const position = coordinatePair(deviceLocation);
+      const existing = markersRef.current.get(device.id);
+
+      if (existing) {
+        existing.setPosition(position);
+        existing.setTitle(device.name);
+        existing.setContent(createDeviceMarker(device.name, active));
+      } else {
+        const marker = new AMap.Marker({
+          position,
+          title: device.name,
+          content: createDeviceMarker(device.name, active),
+          offset: new AMap.Pixel(-18, -46),
+          map,
+        });
+        marker.on('click', () => onSelectDevice(device.id));
+        markersRef.current.set(device.id, marker);
+      }
+    }
+
+    for (const [deviceId, marker] of markersRef.current) {
+      if (!activeMarkerIds.has(deviceId)) {
+        marker.setMap(null);
+        markersRef.current.delete(deviceId);
+      }
+    }
+
+    const trackPath = tracks.map(coordinatePair);
+    if (trackPath.length > 1) {
+      if (polylineRef.current) {
+        polylineRef.current.setPath(trackPath);
+      } else {
+        polylineRef.current = new AMap.Polyline({
+          path: trackPath,
+          strokeColor: '#2f8f4e',
+          strokeWeight: 6,
+          strokeOpacity: 0.9,
+          map,
+        });
+      }
+    } else if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
+    }
+
+    if (!didFitInitialViewRef.current && markersRef.current.size > 0) {
+      const overlays = [...markersRef.current.values()];
+      if (polylineRef.current) overlays.push(polylineRef.current);
+      map.setFitView(overlays, false, [80, 80, 80, 80]);
+      didFitInitialViewRef.current = true;
+    }
+  }, [locatedDevices, selectedDevice?.id, tracks, onSelectDevice]);
 
   if (!key) {
     return (
@@ -774,6 +820,11 @@ function trackLink(locations: Location[], name: string) {
 function mapCoordinate(location: Location) {
   const wgs84 = { latitude: location.latitude, longitude: location.longitude };
   return wgs84ToGcj02(wgs84);
+}
+
+function coordinatePair(location: Location) {
+  const point = mapCoordinate(location);
+  return [point.longitude, point.latitude];
 }
 
 function wgs84ToGcj02(point: { latitude: number; longitude: number }) {
