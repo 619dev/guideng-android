@@ -58,10 +58,8 @@ declare global {
     AMap?: any;
     GuidengNative?: {
       getCurrentLocation: (requestId: string) => void;
-      getDiagnostics?: (requestId: string) => void;
     };
     __guidengNativeLocationResult?: (requestId: string, result: NativeLocationResult) => void;
-    __guidengNativeDiagnosticsResult?: (requestId: string, result: NativeDiagnosticsResult) => void;
     _AMapSecurityConfig?: {
       securityJsCode?: string;
     };
@@ -80,22 +78,6 @@ type NativeLocationResult =
       code?: string;
       message?: string;
     };
-
-type NativeDiagnosticsResult = {
-  ok?: boolean;
-  sdk?: number;
-  finePermission?: boolean;
-  coarsePermission?: boolean;
-  backgroundPermission?: boolean;
-  notificationPermission?: boolean;
-  foregroundServiceAllowed?: boolean;
-  locationManager?: boolean;
-  allProviders?: string[];
-  enabledProviders?: string[];
-  lastKnownLocation?: (NativeLocationResult & { ageMs?: number }) | null;
-  code?: string;
-  message?: string;
-};
 
 const storageKey = 'guideng.session';
 const langKey = 'guideng.lang';
@@ -179,8 +161,6 @@ function App() {
   const [editingName, setEditingName] = useState('');
   const [status, setStatus] = useState<'idle' | 'locating' | 'sharing'>('idle');
   const [error, setError] = useState('');
-  const [diagnostics, setDiagnostics] = useState<NativeDiagnosticsResult | null>(null);
-  const [diagnosticLog, setDiagnosticLog] = useState<string[]>([]);
   const t = i18n[lang];
 
   useEffect(() => {
@@ -202,21 +182,14 @@ function App() {
 
   useEffect(() => {
     if (!session) return;
-    refreshDiagnostics().catch(showError);
-  }, [session]);
-
-  useEffect(() => {
-    if (!session) return;
     let watchId: number | null = null;
     let cancelled = false;
 
     if ('geolocation' in navigator) {
       setStatus('locating');
-      addDiagnosticLog(`开始定位，原生桥: ${window.GuidengNative?.getCurrentLocation ? '可用' : '不可用'}`);
       getCurrentLocation()
         .then(async (position) => {
           if (cancelled) return;
-          addDiagnosticLog(`定位返回: ${position.coords.latitude.toFixed(5)}, ${position.coords.longitude.toFixed(5)}`);
           await sharePosition(session, position);
         })
         .catch((err) => {
@@ -254,40 +227,9 @@ function App() {
     try {
       await sendLocation(activeSession, position);
       await refreshDevices(activeSession);
-      addDiagnosticLog('位置上传成功');
       setError('');
     } catch (err) {
-      addDiagnosticLog(`位置上传失败: ${err instanceof Error ? err.message : String(err)}`);
       showError(err);
-    }
-  }
-
-  function addDiagnosticLog(message: string) {
-    setDiagnosticLog((items) => [`${new Date().toLocaleTimeString()} ${message}`, ...items].slice(0, 8));
-  }
-
-  async function refreshDiagnostics() {
-    const result = await getNativeDiagnostics();
-    setDiagnostics(result);
-    addDiagnosticLog(result.ok === false ? `诊断失败: ${result.message || result.code || 'unknown'}` : '诊断已刷新');
-  }
-
-  async function testNativeLocation() {
-    if (!session) return;
-    setStatus('locating');
-    setError('');
-    addDiagnosticLog('手动测试定位开始');
-    try {
-      await refreshDiagnostics();
-      const position = await getCurrentLocation();
-      addDiagnosticLog(`手动定位返回: ${position.coords.latitude.toFixed(5)}, ${position.coords.longitude.toFixed(5)}`);
-      await sharePosition(session, position);
-      await refreshDiagnostics();
-    } catch (err) {
-      setStatus('idle');
-      const message = locationErrorMessage(err);
-      setError(message);
-      addDiagnosticLog(`手动测试失败: ${message}`);
     }
   }
 
@@ -425,12 +367,6 @@ function App() {
               </button>
             </div>
             <p className="hint">{t.permissionHint}</p>
-            <DiagnosticPanel
-              diagnostics={diagnostics}
-              logs={diagnosticLog}
-              onRefresh={refreshDiagnostics}
-              onTest={testNativeLocation}
-            />
           </section>
 
           <section className="device-list">
@@ -513,69 +449,6 @@ function Login({ lang, setLang, onLogin }: { lang: Lang; setLang: (lang: Lang) =
       </form>
     </main>
   );
-}
-
-function DiagnosticPanel({
-  diagnostics,
-  logs,
-  onRefresh,
-  onTest,
-}: {
-  diagnostics: NativeDiagnosticsResult | null;
-  logs: string[];
-  onRefresh: () => void;
-  onTest: () => void;
-}) {
-  const lastKnown = diagnostics?.lastKnownLocation?.ok ? diagnostics.lastKnownLocation : null;
-  return (
-    <section className="diagnostic-panel">
-      <div className="diagnostic-head">
-        <h2>定位诊断</h2>
-        <div>
-          <button type="button" onClick={onRefresh}>刷新</button>
-          <button type="button" onClick={onTest}>测试</button>
-        </div>
-      </div>
-      <dl className="diagnostic-grid">
-        <div>
-          <dt>原生桥</dt>
-          <dd>{window.GuidengNative?.getCurrentLocation ? '可用' : '不可用'}</dd>
-        </div>
-        <div>
-          <dt>精确定位</dt>
-          <dd>{boolText(diagnostics?.finePermission)}</dd>
-        </div>
-        <div>
-          <dt>粗略定位</dt>
-          <dd>{boolText(diagnostics?.coarsePermission)}</dd>
-        </div>
-        <div>
-          <dt>通知</dt>
-          <dd>{boolText(diagnostics?.notificationPermission)}</dd>
-        </div>
-        <div>
-          <dt>定位服务</dt>
-          <dd>{boolText(diagnostics?.locationManager)}</dd>
-        </div>
-        <div>
-          <dt>Provider</dt>
-          <dd>{diagnostics?.enabledProviders?.join(', ') || '-'}</dd>
-        </div>
-      </dl>
-      <p className="diagnostic-line">
-        Last: {lastKnown ? `${lastKnown.coords.latitude.toFixed(5)}, ${lastKnown.coords.longitude.toFixed(5)} (${Math.round((lastKnown.ageMs || 0) / 1000)}s)` : '-'}
-      </p>
-      {diagnostics?.message && <p className="diagnostic-line">Error: {diagnostics.message}</p>}
-      <ol className="diagnostic-log">
-        {logs.length ? logs.map((item) => <li key={item}>{item}</li>) : <li>等待诊断</li>}
-      </ol>
-    </section>
-  );
-}
-
-function boolText(value: boolean | undefined) {
-  if (value === undefined) return '-';
-  return value ? '是' : '否';
 }
 
 function AmapView({
@@ -844,39 +717,6 @@ function getNativePosition() {
     };
 
     window.GuidengNative?.getCurrentLocation(requestId);
-  });
-}
-
-function getNativeDiagnostics() {
-  return new Promise<NativeDiagnosticsResult>((resolve) => {
-    if (!window.GuidengNative?.getDiagnostics) {
-      resolve({
-        ok: false,
-        code: 'native_bridge_missing',
-        message: window.GuidengNative?.getCurrentLocation ? '原生定位桥存在，但诊断接口不可用。' : '原生定位桥不可用。',
-      });
-      return;
-    }
-
-    const requestId = crypto.randomUUID();
-    const previousHandler = window.__guidengNativeDiagnosticsResult;
-    const timeout = window.setTimeout(() => {
-      window.__guidengNativeDiagnosticsResult = previousHandler;
-      resolve({ ok: false, code: 'diagnostics_timeout', message: '原生诊断超时。' });
-    }, 8_000);
-
-    window.__guidengNativeDiagnosticsResult = (incomingRequestId, result) => {
-      if (incomingRequestId !== requestId) {
-        previousHandler?.(incomingRequestId, result);
-        return;
-      }
-
-      window.clearTimeout(timeout);
-      window.__guidengNativeDiagnosticsResult = previousHandler;
-      resolve(result);
-    };
-
-    window.GuidengNative.getDiagnostics(requestId);
   });
 }
 
