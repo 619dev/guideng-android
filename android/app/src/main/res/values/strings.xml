@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Guideng</string>
+    <string name="title_activity_main">Guideng</string>
+    <string name="foreground_service_channel">Guideng location sharing</string>
+    <string name="foreground_service_title">Guideng is sharing location</string>
+    <string name="foreground_service_text">Keep this notification to allow background location sharing.</string>
+    <string name="package_name">app.fm619.guideng</string>
+    <string name="custom_url_scheme">app.fm619.guideng</string>
+</resources>
