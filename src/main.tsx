@@ -158,23 +158,28 @@ function App() {
 
     if ('geolocation' in navigator) {
       setStatus('locating');
+      getCurrentLocation()
+        .then(async (position) => {
+          if (cancelled) return;
+          await sharePosition(session, position);
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setStatus('idle');
+            setError(locationErrorMessage(err));
+          }
+        });
+
       watchId = navigator.geolocation.watchPosition(
         async (position) => {
           if (cancelled) return;
-          setStatus('sharing');
-          try {
-            await sendLocation(session, position);
-            await refreshDevices(session);
-            setError('');
-          } catch (err) {
-            showError(err);
-          }
+          await sharePosition(session, position);
         },
         (err) => {
           setStatus('idle');
-          setError(err.message);
+          setError(locationErrorMessage(err));
         },
-        { enableHighAccuracy: true, maximumAge: 15_000, timeout: 20_000 },
+        { enableHighAccuracy: true, maximumAge: 30_000, timeout: 60_000 },
       );
     } else {
       setError('Geolocation is not available in this browser.');
@@ -187,6 +192,17 @@ function App() {
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     };
   }, [session]);
+
+  async function sharePosition(activeSession: Session, position: GeolocationPosition) {
+    setStatus('sharing');
+    try {
+      await sendLocation(activeSession, position);
+      await refreshDevices(activeSession);
+      setError('');
+    } catch (err) {
+      showError(err);
+    }
+  }
 
   async function refreshDevices(activeSession = session) {
     if (!activeSession) return;
@@ -622,6 +638,32 @@ async function registerDevice(session: Session) {
       platform: navigator.userAgent,
     }),
   });
+}
+
+async function getCurrentLocation() {
+  try {
+    return await getPosition({ enableHighAccuracy: true, maximumAge: 30_000, timeout: 30_000 });
+  } catch (err) {
+    if (err instanceof GeolocationPositionError && err.code === err.TIMEOUT) {
+      return getPosition({ enableHighAccuracy: false, maximumAge: 120_000, timeout: 45_000 });
+    }
+    throw err;
+  }
+}
+
+function getPosition(options: PositionOptions) {
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, options);
+  });
+}
+
+function locationErrorMessage(err: unknown) {
+  if (err instanceof GeolocationPositionError) {
+    if (err.code === err.PERMISSION_DENIED) return '定位权限未授予，请在系统设置中允许归灯访问位置。';
+    if (err.code === err.POSITION_UNAVAILABLE) return '暂时无法获取位置，请确认系统定位已开启并稍后重试。';
+    if (err.code === err.TIMEOUT) return '定位超时，请到室外或开启 Wi-Fi/移动网络后重试。';
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 async function sendLocation(session: Session, position: GeolocationPosition) {

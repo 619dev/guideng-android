@@ -30,14 +30,12 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestRuntimePermissions();
-        requestBatteryOptimizationExemptionOnce();
         startLocationForegroundServiceIfAllowed();
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        requestBackgroundLocationIfNeeded();
         startLocationForegroundServiceIfAllowed();
     }
 
@@ -45,7 +43,6 @@ public class MainActivity extends BridgeActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_RUNTIME_PERMISSIONS) {
-            requestBackgroundLocationIfNeeded();
             startLocationForegroundServiceIfAllowed();
         }
     }
