@@ -26,6 +26,18 @@ type Location = {
   received_at: string;
 };
 
+type PositionLike = {
+  coords: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number | null;
+    altitude?: number | null;
+    heading?: number | null;
+    speed?: number | null;
+  };
+  timestamp: number;
+};
+
 type Session = {
   serverUrl: string;
   token: string;
@@ -44,11 +56,27 @@ type AppConfig = {
 declare global {
   interface Window {
     AMap?: any;
+    GuidengNative?: {
+      getCurrentLocation: (requestId: string) => void;
+    };
+    __guidengNativeLocationResult?: (requestId: string, result: NativeLocationResult) => void;
     _AMapSecurityConfig?: {
       securityJsCode?: string;
     };
   }
 }
+
+type NativeLocationResult =
+  | {
+      ok: true;
+      coords: PositionLike['coords'];
+      timestamp: number;
+    }
+  | {
+      ok: false;
+      code?: string;
+      message?: string;
+    };
 
 const storageKey = 'guideng.session';
 const langKey = 'guideng.lang';
@@ -193,7 +221,7 @@ function App() {
     };
   }, [session]);
 
-  async function sharePosition(activeSession: Session, position: GeolocationPosition) {
+  async function sharePosition(activeSession: Session, position: PositionLike) {
     setStatus('sharing');
     try {
       await sendLocation(activeSession, position);
@@ -641,14 +669,54 @@ async function registerDevice(session: Session) {
 }
 
 async function getCurrentLocation() {
+  if (window.GuidengNative?.getCurrentLocation) {
+    try {
+      return await getNativePosition();
+    } catch (err) {
+      console.warn('Native location failed, falling back to WebView geolocation.', err);
+    }
+  }
+
   try {
     return await getPosition({ enableHighAccuracy: true, maximumAge: 30_000, timeout: 30_000 });
   } catch (err) {
-    if (err instanceof GeolocationPositionError && err.code === err.TIMEOUT) {
+    if (isGeolocationError(err) && err.code === err.TIMEOUT) {
       return getPosition({ enableHighAccuracy: false, maximumAge: 120_000, timeout: 45_000 });
     }
     throw err;
   }
+}
+
+function getNativePosition() {
+  return new Promise<PositionLike>((resolve, reject) => {
+    const requestId = crypto.randomUUID();
+    const previousHandler = window.__guidengNativeLocationResult;
+    const timeout = window.setTimeout(() => {
+      window.__guidengNativeLocationResult = previousHandler;
+      reject(new Error('原生定位超时，请确认系统定位已开启。'));
+    }, 30_000);
+
+    window.__guidengNativeLocationResult = (incomingRequestId, result) => {
+      if (incomingRequestId !== requestId) {
+        previousHandler?.(incomingRequestId, result);
+        return;
+      }
+
+      window.clearTimeout(timeout);
+      window.__guidengNativeLocationResult = previousHandler;
+
+      if (result.ok) {
+        resolve({
+          coords: result.coords,
+          timestamp: result.timestamp,
+        });
+      } else {
+        reject(new Error(result.message || result.code || '原生定位失败。'));
+      }
+    };
+
+    window.GuidengNative?.getCurrentLocation(requestId);
+  });
 }
 
 function getPosition(options: PositionOptions) {
@@ -658,7 +726,7 @@ function getPosition(options: PositionOptions) {
 }
 
 function locationErrorMessage(err: unknown) {
-  if (err instanceof GeolocationPositionError) {
+  if (isGeolocationError(err)) {
     if (err.code === err.PERMISSION_DENIED) return '定位权限未授予，请在系统设置中允许归灯访问位置。';
     if (err.code === err.POSITION_UNAVAILABLE) return '暂时无法获取位置，请确认系统定位已开启并稍后重试。';
     if (err.code === err.TIMEOUT) return '定位超时，请到室外或开启 Wi-Fi/移动网络后重试。';
@@ -666,7 +734,11 @@ function locationErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function sendLocation(session: Session, position: GeolocationPosition) {
+function isGeolocationError(err: unknown): err is GeolocationPositionError {
+  return typeof err === 'object' && err !== null && 'code' in err && 'message' in err;
+}
+
+async function sendLocation(session: Session, position: PositionLike) {
   return api<Device>(session, `/api/devices/${session.deviceId}/location`, {
     method: 'POST',
     body: JSON.stringify({
